@@ -149,19 +149,31 @@ static bool vsr_init_vfx(vsr_filter_data *filter) {
 static void vsr_update(void *data, obs_data_t *settings) {
     auto *filter = static_cast<vsr_filter_data *>(data);
 
-    filter->scale_mode = static_cast<int>(obs_data_get_int(settings, S_SCALE_MODE));
-    filter->scale_multiplier = static_cast<float>(obs_data_get_double(settings, S_SCALE_MULTIPLIER));
+    int new_mode = static_cast<int>(obs_data_get_int(settings, S_SCALE_MODE));
+    float new_mult = static_cast<float>(obs_data_get_double(settings, S_SCALE_MULTIPLIER));
+    int new_q = static_cast<int>(obs_data_get_int(settings, S_QUALITY));
+    int new_tw = filter->target_width;
+    int new_th = filter->target_height;
+
     const char *target_res_str = obs_data_get_string(settings, S_TARGET_RES);
     if (target_res_str && *target_res_str) {
         int w = 1920, h = 1080;
         if (sscanf(target_res_str, "%dx%d", &w, &h) == 2) {
-            filter->target_width = w;
-            filter->target_height = h;
+            new_tw = w;
+            new_th = h;
         }
     }
-    int new_q = static_cast<int>(obs_data_get_int(settings, S_QUALITY));
-    if (filter->quality_level != new_q) {
+
+    if (new_mode != filter->scale_mode ||
+        new_mult != filter->scale_multiplier ||
+        new_q != filter->quality_level ||
+        new_tw != filter->target_width ||
+        new_th != filter->target_height) {
+        filter->scale_mode = new_mode;
+        filter->scale_multiplier = new_mult;
         filter->quality_level = new_q;
+        filter->target_width = new_tw;
+        filter->target_height = new_th;
         filter->needs_reload = true;
     }
 }
@@ -214,7 +226,11 @@ static void vsr_video_tick(void *data, float seconds) {
     uint32_t calc_out_w = cur_w;
     uint32_t calc_out_h = cur_h;
 
-    if (filter->scale_mode == 0) {
+    if (filter->quality_level >= 8 && filter->quality_level <= 13) {
+        // Denoise/Deblur modes are 1x-only cleanup passes
+        calc_out_w = cur_w;
+        calc_out_h = cur_h;
+    } else if (filter->scale_mode == 0) {
         calc_out_w = static_cast<uint32_t>(cur_w * filter->scale_multiplier);
         calc_out_h = static_cast<uint32_t>(cur_h * filter->scale_multiplier);
     } else {
@@ -282,8 +298,13 @@ static void vsr_video_render(void *data, gs_effect_t *effect) {
         obs_source_skip_video_filter(filter->context);
         return;
     }
+    struct vec4 clear_color = {};
+    gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
     gs_ortho(0.0f, static_cast<float>(filter->in_width), 0.0f, static_cast<float>(filter->in_height), -100.0f, 100.0f);
+    gs_blend_state_push();
+    gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
     obs_source_video_render(target);
+    gs_blend_state_pop();
     gs_texrender_end(filter->texrender_in);
 
     gs_texture_t *in_tex = gs_texrender_get_texture(filter->texrender_in);
@@ -292,14 +313,14 @@ static void vsr_video_render(void *data, gs_effect_t *effect) {
         return;
     }
 
-    // Register textures with CUDA if not already registered
-    if (!filter->bridge_in.is_registered()) {
+    // Register textures with CUDA if not already registered or if texture changed
+    if (!filter->bridge_in.is_registered() || filter->bridge_in.gs_texture() != in_tex) {
         if (!filter->bridge_in.register_texture(in_tex, filter->in_width, filter->in_height, cudaGraphicsRegisterFlagsReadOnly)) {
             obs_source_skip_video_filter(filter->context);
             return;
         }
     }
-    if (!filter->bridge_out.is_registered()) {
+    if (!filter->bridge_out.is_registered() || filter->bridge_out.gs_texture() != filter->texture_out) {
         if (!filter->bridge_out.register_texture(filter->texture_out, filter->out_width, filter->out_height, cudaGraphicsRegisterFlagsWriteDiscard)) {
             obs_source_skip_video_filter(filter->context);
             return;
@@ -347,11 +368,28 @@ static void vsr_video_render(void *data, gs_effect_t *effect) {
     filter->bridge_in.unmap(stream);
     filter->bridge_out.unmap(stream);
 
-    // Step 6: Render upscaled output texture to the filter chain
-    if (obs_source_process_filter_begin(filter->context, GS_RGBA, OBS_NO_DIRECT_RENDERING)) {
+    // Step 6: Render upscaled output texture directly to the active render target
+    const bool previous_linear = gs_set_linear_srgb(true);
+    const bool linear_srgb = gs_get_linear_srgb();
+    const bool prev_fbo_srgb = gs_framebuffer_srgb_enabled();
+    gs_enable_framebuffer_srgb(linear_srgb);
+
+    if (linear_srgb) {
+        gs_effect_set_texture_srgb(filter->image_param, filter->texture_out);
+    } else {
         gs_effect_set_texture(filter->image_param, filter->texture_out);
-        obs_source_process_filter_end(filter->context, filter->effect, filter->out_width, filter->out_height);
     }
+
+    gs_blend_state_push();
+    gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+
+    while (gs_effect_loop(filter->effect, "Draw")) {
+        gs_draw_sprite(filter->texture_out, 0, filter->out_width, filter->out_height);
+    }
+
+    gs_blend_state_pop();
+    gs_enable_framebuffer_srgb(prev_fbo_srgb);
+    gs_set_linear_srgb(previous_linear);
 }
 
 static uint32_t vsr_get_width(void *data) {
@@ -442,7 +480,7 @@ static obs_properties_t *vsr_get_properties(void *data) {
 struct obs_source_info vsr_filter_info = {
     .id = "rtx_vsr_filter",
     .type = OBS_SOURCE_TYPE_FILTER,
-    .output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB,
+    .output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB,
     .get_name = vsr_get_name,
     .create = vsr_create,
     .destroy = vsr_destroy,

@@ -78,10 +78,10 @@ float4 PSDraw_709Extended(VertData v_in) : TARGET {
 float4 PSDraw_SDR(VertData v_in) : TARGET {
     float alpha;
     float3 nits709 = SampleLinearNits(v_in.uv, alpha);
-    float3 norm_sdr = nits709 / max(sdr_white_level, 80.0);
-    float3 tm = norm_sdr / (norm_sdr + 1.0);
-    float3 srgb = srgb_linear_to_nonlinear(saturate(tm));
-    return float4(srgb, alpha);
+    float white = max(sdr_white_level, 80.0);
+    float3 norm_sdr = nits709 / white;
+    float3 tm = (norm_sdr * (1.0 + norm_sdr * 0.2)) / (1.0 + norm_sdr * 0.8);
+    return float4(saturate(tm), alpha);
 }
 
 technique DrawHDR_scRGB {

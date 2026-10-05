@@ -6,6 +6,7 @@
 #include <util/platform.h>
 #include <util/dstr.h>
 #include <chrono>
+#include <atomic>
 #include <string>
 
 #define S_LUMINANCE     "luminance"
@@ -20,11 +21,17 @@ struct truehdr_filter_data {
     gs_eparam_t *image_param = nullptr;
     gs_eparam_t *sdr_white_param = nullptr;
 
-    // Filter tunables
-    int luminance = 1000;
-    int contrast = 100;
-    int saturation = 100;
-    int middle_gray = 50;
+    // Filter tunables (atomic for immediate live parameter updates from UI)
+    std::atomic<int> target_luminance{1000};
+    std::atomic<int> target_contrast{100};
+    std::atomic<int> target_saturation{100};
+    std::atomic<int> target_middle_gray{50};
+    std::atomic<bool> params_changed{true};
+
+    int cur_luminance = 1000;
+    int cur_contrast = 100;
+    int cur_saturation = 100;
+    int cur_middle_gray = 50;
 
     // Dimensions
     uint32_t width = 0;
@@ -69,7 +76,7 @@ static void update_hdr_status_text(truehdr_filter_data *filter) {
     }
     char buf[256];
     snprintf(buf, sizeof(buf), "SDK: Ready | Peak: %d nits | GPU: %.2f ms (%.1f FPS)",
-             filter->luminance, filter->last_ms, filter->last_fps);
+             filter->cur_luminance, filter->last_ms, filter->last_fps);
     filter->status_msg = buf;
 }
 
@@ -132,12 +139,23 @@ static bool truehdr_init_vfx(truehdr_filter_data *filter) {
                   static_cast<int>(filter->buf_out.pitch), filter->buf_out.ptr,
                   NVCV_RGB10A2, NVCV_P32, NVCV_CHUNKY, NVCV_CUDA);
 
+    int lum = filter->target_luminance.load();
+    int con = filter->target_contrast.load();
+    int sat = filter->target_saturation.load();
+    int mg  = filter->target_middle_gray.load();
+
     api.SetCudaStream(filter->vfx_handle, NVVFX_PARAM_CUDA_STREAM, filter->stream);
-    api.SetU32(filter->vfx_handle, NVVFX_PARAM_LUMINANCE, filter->luminance);
-    api.SetU32(filter->vfx_handle, NVVFX_PARAM_CONTRAST, filter->contrast);
-    api.SetU32(filter->vfx_handle, NVVFX_PARAM_SATURATION, filter->saturation);
-    api.SetU32(filter->vfx_handle, NVVFX_PARAM_MIDDLE_GRAY, filter->middle_gray);
+    api.SetU32(filter->vfx_handle, NVVFX_PARAM_LUMINANCE, lum);
+    api.SetU32(filter->vfx_handle, NVVFX_PARAM_CONTRAST, con);
+    api.SetU32(filter->vfx_handle, NVVFX_PARAM_SATURATION, sat);
+    api.SetU32(filter->vfx_handle, NVVFX_PARAM_MIDDLE_GRAY, mg);
     api.SetU32(filter->vfx_handle, NVVFX_PARAM_DEBANDING_OFF, 0);
+
+    filter->cur_luminance = lum;
+    filter->cur_contrast = con;
+    filter->cur_saturation = sat;
+    filter->cur_middle_gray = mg;
+    filter->params_changed.store(false);
 
     api.SetImage(filter->vfx_handle, NVVFX_PARAM_SRC_IMAGE_0, &filter->src_img);
     api.SetImage(filter->vfx_handle, NVVFX_PARAM_DST_IMAGE_0, &filter->dst_img);
@@ -151,25 +169,19 @@ static bool truehdr_init_vfx(truehdr_filter_data *filter) {
     filter->vfx_initialized = true;
     filter->needs_reload = false;
     blog(LOG_INFO, "[LinRTX TrueHDR] Initialized %ux%u, Peak Luminance %d nits",
-         filter->width, filter->height, filter->luminance);
+         filter->width, filter->height, lum);
     return true;
 }
 
 static void truehdr_update(void *data, obs_data_t *settings) {
     auto *filter = static_cast<truehdr_filter_data *>(data);
 
-    filter->luminance = static_cast<int>(obs_data_get_int(settings, S_LUMINANCE));
-    filter->contrast = static_cast<int>(obs_data_get_int(settings, S_CONTRAST));
-    filter->saturation = static_cast<int>(obs_data_get_int(settings, S_SATURATION));
-    filter->middle_gray = static_cast<int>(obs_data_get_int(settings, S_MIDDLE_GRAY));
-
-    if (filter->vfx_initialized && filter->vfx_handle) {
-        const auto &api = linrtx::vfx();
-        api.SetU32(filter->vfx_handle, NVVFX_PARAM_LUMINANCE, filter->luminance);
-        api.SetU32(filter->vfx_handle, NVVFX_PARAM_CONTRAST, filter->contrast);
-        api.SetU32(filter->vfx_handle, NVVFX_PARAM_SATURATION, filter->saturation);
-        api.SetU32(filter->vfx_handle, NVVFX_PARAM_MIDDLE_GRAY, filter->middle_gray);
-    }
+    filter->target_luminance.store(static_cast<int>(obs_data_get_int(settings, S_LUMINANCE)));
+    filter->target_contrast.store(static_cast<int>(obs_data_get_int(settings, S_CONTRAST)));
+    filter->target_saturation.store(static_cast<int>(obs_data_get_int(settings, S_SATURATION)));
+    filter->target_middle_gray.store(static_cast<int>(obs_data_get_int(settings, S_MIDDLE_GRAY)));
+    filter->params_changed.store(true);
+    update_hdr_status_text(filter);
 }
 
 static void *truehdr_create(obs_data_t *settings, obs_source_t *context) {
@@ -303,8 +315,13 @@ static void truehdr_video_render(void *data, gs_effect_t *effect) {
         obs_source_skip_video_filter(filter->context);
         return;
     }
+    struct vec4 clear_color = {};
+    gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
     gs_ortho(0.0f, static_cast<float>(filter->width), 0.0f, static_cast<float>(filter->height), -100.0f, 100.0f);
+    gs_blend_state_push();
+    gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
     obs_source_video_render(target);
+    gs_blend_state_pop();
     gs_texrender_end(filter->texrender_in);
 
     gs_texture_t *in_tex = gs_texrender_get_texture(filter->texrender_in);
@@ -313,13 +330,13 @@ static void truehdr_video_render(void *data, gs_effect_t *effect) {
         return;
     }
 
-    if (!filter->bridge_in.is_registered()) {
+    if (!filter->bridge_in.is_registered() || filter->bridge_in.gs_texture() != in_tex) {
         if (!filter->bridge_in.register_texture(in_tex, filter->width, filter->height, cudaGraphicsRegisterFlagsReadOnly)) {
             obs_source_skip_video_filter(filter->context);
             return;
         }
     }
-    if (!filter->bridge_out.is_registered()) {
+    if (!filter->bridge_out.is_registered() || filter->bridge_out.gs_texture() != filter->texture_out) {
         if (!filter->bridge_out.register_texture(filter->texture_out, filter->width, filter->height, cudaGraphicsRegisterFlagsWriteDiscard)) {
             obs_source_skip_video_filter(filter->context);
             return;
@@ -340,9 +357,35 @@ static void truehdr_video_render(void *data, gs_effect_t *effect) {
             cudaMemcpyDeviceToDevice, stream
         );
 
+        // Check and apply live parameter updates from UI sliders
+        const auto &api = linrtx::vfx();
+        if (filter->params_changed.load()) {
+            int lum = filter->target_luminance.load();
+            int con = filter->target_contrast.load();
+            int sat = filter->target_saturation.load();
+            int mg  = filter->target_middle_gray.load();
+
+            if (lum != filter->cur_luminance) {
+                api.SetU32(filter->vfx_handle, NVVFX_PARAM_LUMINANCE, lum);
+                filter->cur_luminance = lum;
+            }
+            if (con != filter->cur_contrast) {
+                api.SetU32(filter->vfx_handle, NVVFX_PARAM_CONTRAST, con);
+                filter->cur_contrast = con;
+            }
+            if (sat != filter->cur_saturation) {
+                api.SetU32(filter->vfx_handle, NVVFX_PARAM_SATURATION, sat);
+                filter->cur_saturation = sat;
+            }
+            if (mg != filter->cur_middle_gray) {
+                api.SetU32(filter->vfx_handle, NVVFX_PARAM_MIDDLE_GRAY, mg);
+                filter->cur_middle_gray = mg;
+            }
+            filter->params_changed.store(false);
+        }
+
         // Run TrueHDR inference
         auto t0 = std::chrono::high_resolution_clock::now();
-        const auto &api = linrtx::vfx();
         NvCV_Status run_err = api.Run(filter->vfx_handle, 0);
         cudaStreamSynchronize(stream);
         auto t1 = std::chrono::high_resolution_clock::now();
@@ -375,26 +418,36 @@ static void truehdr_video_render(void *data, gs_effect_t *effect) {
     filter->bridge_in.unmap(stream);
     filter->bridge_out.unmap(stream);
 
-    // Step 3: Determine target color space and technique
+    // Step 3: Determine target color space and draw technique
     enum gs_color_space current_space = gs_get_color_space();
     const char *technique = "DrawSDR_Tonemap";
-    enum gs_color_format draw_format = GS_RGBA;
 
     if (current_space == GS_CS_709_SCRGB) {
         technique = "DrawHDR_scRGB";
-        draw_format = GS_RGBA16F;
     } else if (current_space == GS_CS_709_EXTENDED) {
         technique = "DrawHDR_Extended";
-        draw_format = GS_RGBA16F;
     }
 
-    if (obs_source_process_filter_begin_with_color_space(filter->context, draw_format, current_space, OBS_NO_DIRECT_RENDERING)) {
-        gs_effect_set_texture(filter->image_param, filter->texture_out);
-        if (filter->sdr_white_param) {
-            gs_effect_set_float(filter->sdr_white_param, obs_get_video_sdr_white_level());
-        }
-        obs_source_process_filter_tech_end(filter->context, filter->effect, filter->width, filter->height, technique);
+    const bool previous_linear = gs_set_linear_srgb(true);
+    const bool linear_srgb = gs_get_linear_srgb();
+    const bool prev_fbo_srgb = gs_framebuffer_srgb_enabled();
+    gs_enable_framebuffer_srgb(linear_srgb);
+
+    gs_effect_set_texture(filter->image_param, filter->texture_out);
+    if (filter->sdr_white_param) {
+        gs_effect_set_float(filter->sdr_white_param, obs_get_video_sdr_white_level());
     }
+
+    gs_blend_state_push();
+    gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+
+    while (gs_effect_loop(filter->effect, technique)) {
+        gs_draw_sprite(filter->texture_out, 0, filter->width, filter->height);
+    }
+
+    gs_blend_state_pop();
+    gs_enable_framebuffer_srgb(prev_fbo_srgb);
+    gs_set_linear_srgb(previous_linear);
 }
 
 static uint32_t truehdr_get_width(void *data) {
@@ -419,7 +472,7 @@ static obs_properties_t *truehdr_get_properties(void *data) {
     auto *filter = static_cast<truehdr_filter_data *>(data);
     obs_properties_t *props = obs_properties_create();
 
-    obs_properties_add_int_slider(props, S_LUMINANCE, obs_module_text("PeakLuminance"), 400, 2000, 50);
+    obs_properties_add_int_slider(props, S_LUMINANCE, obs_module_text("PeakLuminance"), 100, 4000, 50);
     obs_properties_add_int_slider(props, S_CONTRAST, obs_module_text("Contrast"), 0, 200, 1);
     obs_properties_add_int_slider(props, S_SATURATION, obs_module_text("Saturation"), 0, 200, 1);
     obs_properties_add_int_slider(props, S_MIDDLE_GRAY, obs_module_text("MiddleGray"), 10, 100, 1);
@@ -436,7 +489,7 @@ static obs_properties_t *truehdr_get_properties(void *data) {
 struct obs_source_info truehdr_filter_info = {
     .id = "rtx_truehdr_filter",
     .type = OBS_SOURCE_TYPE_FILTER,
-    .output_flags = OBS_SOURCE_VIDEO,
+    .output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB,
     .get_name = truehdr_get_name,
     .create = truehdr_create,
     .destroy = truehdr_destroy,
