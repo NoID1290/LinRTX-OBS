@@ -3,6 +3,8 @@ build/
 build-*/
 bin/
 out/
+tools/vsr_test
+tools/truehdr_test
 *.o
 *.so
 *.a
