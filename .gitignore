@@ -1,0 +1,33 @@
+# Build directories
+build/
+build-*/
+bin/
+out/
+*.o
+*.so
+*.a
+
+# Test outputs
+tools/output_*
+*.png
+*.exr
+*.mp4
+*.mkv
+
+# NVIDIA proprietary SDK binaries and models
+*.dll
+*.pdb
+*.onnx
+*.engine
+*.trt
+libs/
+models/
+nvvfx_libs/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*~
+compile_commands.json
+.cache/
