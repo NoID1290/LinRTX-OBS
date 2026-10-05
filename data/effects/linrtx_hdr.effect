@@ -1,0 +1,106 @@
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float sdr_white_level = 200.0;
+
+sampler_state def_sampler {
+    Filter    = Linear;
+    AddressU  = Clamp;
+    AddressV  = Clamp;
+};
+
+struct VertData {
+    float4 pos : POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in) {
+    VertData v_out;
+    v_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+    v_out.uv  = v_in.uv;
+    return v_out;
+}
+
+float st2084_to_linear_channel(float u) {
+    float c = pow(abs(u), 1.0 / 78.84375);
+    return pow(abs(max(c - 0.8359375, 0.0) / (18.8515625 - 18.6875 * c)), 1.0 / 0.1593017578);
+}
+
+float3 rec2020_to_rec709(float3 v) {
+    float r = dot(v, float3(1.6604910021084345, -0.58764113878854951, -0.072849863319884883));
+    float g = dot(v, float3(-0.12455047452159074, 1.1328998971259603, -0.0083494226043694768));
+    float b = dot(v, float3(-0.018150763354905303, -0.10057889800800739, 1.1187296613629127));
+    return float3(r, g, b);
+}
+
+float srgb_linear_to_nonlinear_channel(float u) {
+    return (u <= 0.0031308) ? (12.92 * u) : ((1.055 * pow(u, 1.0 / 2.4)) - 0.055);
+}
+
+float3 srgb_linear_to_nonlinear(float3 v) {
+    return float3(
+        srgb_linear_to_nonlinear_channel(v.r),
+        srgb_linear_to_nonlinear_channel(v.g),
+        srgb_linear_to_nonlinear_channel(v.b)
+    );
+}
+
+// Convert PQ BT.2020 to Rec.709 Linear Nits (0..10000)
+float3 SampleLinearNits(float2 uv, out float alpha) {
+    float4 samp = image.Sample(def_sampler, uv);
+    alpha = samp.a;
+    float3 pq = saturate(samp.rgb);
+    float3 linear_norm = float3(
+        st2084_to_linear_channel(pq.r),
+        st2084_to_linear_channel(pq.g),
+        st2084_to_linear_channel(pq.b)
+    );
+    float3 linear_nits = linear_norm * 10000.0;
+    return max(float3(0.0, 0.0, 0.0), rec2020_to_rec709(linear_nits));
+}
+
+// Draw to scRGB (1.0 = 80 nits)
+float4 PSDraw_scRGB(VertData v_in) : TARGET {
+    float alpha;
+    float3 nits709 = SampleLinearNits(v_in.uv, alpha);
+    float3 scrgb = nits709 / 80.0;
+    return float4(scrgb, alpha);
+}
+
+// Draw to 709_EXTENDED (1.0 = sdr_white_level)
+float4 PSDraw_709Extended(VertData v_in) : TARGET {
+    float alpha;
+    float3 nits709 = SampleLinearNits(v_in.uv, alpha);
+    float3 ext = nits709 / max(sdr_white_level, 1.0);
+    return float4(ext, alpha);
+}
+
+// Draw SDR Tonemapped Preview for SDR Canvases (Reinhard + sRGB gamma)
+float4 PSDraw_SDR(VertData v_in) : TARGET {
+    float alpha;
+    float3 nits709 = SampleLinearNits(v_in.uv, alpha);
+    float3 norm_sdr = nits709 / max(sdr_white_level, 80.0);
+    float3 tm = norm_sdr / (norm_sdr + 1.0);
+    float3 srgb = srgb_linear_to_nonlinear(saturate(tm));
+    return float4(srgb, alpha);
+}
+
+technique DrawHDR_scRGB {
+    pass {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = PSDraw_scRGB(v_in);
+    }
+}
+
+technique DrawHDR_Extended {
+    pass {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = PSDraw_709Extended(v_in);
+    }
+}
+
+technique DrawSDR_Tonemap {
+    pass {
+        vertex_shader = VSDefault(v_in);
+        pixel_shader  = PSDraw_SDR(v_in);
+    }
+}
