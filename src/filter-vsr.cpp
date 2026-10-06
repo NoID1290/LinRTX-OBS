@@ -16,6 +16,7 @@ struct vsr_filter_data {
     obs_source_t *context = nullptr;
     gs_effect_t *effect = nullptr;
     gs_eparam_t *image_param = nullptr;
+    gs_eparam_t *multiplier_param = nullptr;
 
     // Filter settings
     int scale_mode = 0; // 0 = Multiplier, 1 = Target resolution
@@ -185,6 +186,7 @@ static void *vsr_create(obs_data_t *settings, obs_source_t *context) {
     obs_enter_graphics();
     filter->effect = obs_get_base_effect(OBS_EFFECT_DEFAULT);
     filter->image_param = gs_effect_get_param_by_name(filter->effect, "image");
+    filter->multiplier_param = gs_effect_get_param_by_name(filter->effect, "multiplier");
     obs_leave_graphics();
 
     linrtx::load_sdk();
@@ -379,24 +381,30 @@ static void vsr_video_render(void *data, gs_effect_t *effect) {
     filter->bridge_in.unmap(stream);
     filter->bridge_out.unmap(stream);
 
-    // Step 6: Render upscaled output texture directly to the active render target
-    const bool previous_linear = gs_set_linear_srgb(true);
-    const bool linear_srgb = gs_get_linear_srgb();
-    const bool prev_fbo_srgb = gs_framebuffer_srgb_enabled();
-    gs_enable_framebuffer_srgb(linear_srgb);
+    // Step 6: Render upscaled output texture directly to the active render target with color space management
+    enum gs_color_space current_space = gs_get_color_space();
+    const char *technique = "Draw";
+
+    if (current_space == GS_CS_709_SCRGB) {
+        technique = "DrawSrgbDecompressMultiply";
+        if (filter->multiplier_param) {
+            float sdr_white = obs_get_video_sdr_white_level();
+            gs_effect_set_float(filter->multiplier_param, sdr_white / 80.0f);
+        }
+    } else if (current_space == GS_CS_709_EXTENDED) {
+        technique = "DrawSrgbDecompress";
+    }
 
     gs_effect_set_texture(filter->image_param, filter->texture_out);
 
     gs_blend_state_push();
     gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
 
-    while (gs_effect_loop(filter->effect, "Draw")) {
+    while (gs_effect_loop(filter->effect, technique)) {
         gs_draw_sprite(filter->texture_out, 0, filter->out_width, filter->out_height);
     }
 
     gs_blend_state_pop();
-    gs_enable_framebuffer_srgb(prev_fbo_srgb);
-    gs_set_linear_srgb(previous_linear);
 }
 
 static uint32_t vsr_get_width(void *data) {
@@ -416,6 +424,7 @@ static enum gs_color_space vsr_get_color_space(void *data, size_t count, const e
         GS_CS_SRGB,
         GS_CS_SRGB_16F,
         GS_CS_709_EXTENDED,
+        GS_CS_709_SCRGB,
     };
     enum gs_color_space source_space = target ?
         obs_source_get_color_space(target, OBS_COUNTOF(potential_spaces), potential_spaces) : GS_CS_SRGB;
