@@ -256,8 +256,9 @@ static void vsr_video_render(void *data, gs_effect_t *effect) {
     UNUSED_PARAMETER(effect);
     auto *filter = static_cast<vsr_filter_data *>(data);
     obs_source_t *target = obs_filter_get_target(filter->context);
+    obs_source_t *parent = obs_filter_get_parent(filter->context);
 
-    if (!target || filter->in_width == 0 || filter->in_height == 0) {
+    if (!target || !parent || filter->in_width == 0 || filter->in_height == 0) {
         obs_source_skip_video_filter(filter->context);
         return;
     }
@@ -293,6 +294,10 @@ static void vsr_video_render(void *data, gs_effect_t *effect) {
     }
 
     // Step 1: Render source into input gs_texrender
+    uint32_t parent_flags = obs_source_get_output_flags(parent);
+    bool custom_draw = (parent_flags & OBS_SOURCE_CUSTOM_DRAW) != 0;
+    bool async = (parent_flags & OBS_SOURCE_ASYNC) != 0;
+
     gs_texrender_reset(filter->texrender_in);
     if (!gs_texrender_begin(filter->texrender_in, filter->in_width, filter->in_height)) {
         obs_source_skip_video_filter(filter->context);
@@ -303,7 +308,13 @@ static void vsr_video_render(void *data, gs_effect_t *effect) {
     gs_ortho(0.0f, static_cast<float>(filter->in_width), 0.0f, static_cast<float>(filter->in_height), -100.0f, 100.0f);
     gs_blend_state_push();
     gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
-    obs_source_video_render(target);
+
+    if (target == parent && !custom_draw && !async) {
+        obs_source_default_render(target);
+    } else {
+        obs_source_video_render(target);
+    }
+
     gs_blend_state_pop();
     gs_texrender_end(filter->texrender_in);
 
@@ -374,11 +385,7 @@ static void vsr_video_render(void *data, gs_effect_t *effect) {
     const bool prev_fbo_srgb = gs_framebuffer_srgb_enabled();
     gs_enable_framebuffer_srgb(linear_srgb);
 
-    if (linear_srgb) {
-        gs_effect_set_texture_srgb(filter->image_param, filter->texture_out);
-    } else {
-        gs_effect_set_texture(filter->image_param, filter->texture_out);
-    }
+    gs_effect_set_texture(filter->image_param, filter->texture_out);
 
     gs_blend_state_push();
     gs_blend_function(GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);

@@ -19,13 +19,11 @@ __global__ void k_unpack_rgb10a2_to_rgba16f(
     float r = ((pixel >> 0) & 0x3FF) * (1.0f / 1023.0f);
     float g = ((pixel >> 10) & 0x3FF) * (1.0f / 1023.0f);
     float b = ((pixel >> 20) & 0x3FF) * (1.0f / 1023.0f);
-    float a = ((pixel >> 30) & 0x3) * (1.0f / 3.0f);
-
     size_t out_idx = x * 4;
     row_dst[out_idx + 0] = __float2half_rn(r);
     row_dst[out_idx + 1] = __float2half_rn(g);
     row_dst[out_idx + 2] = __float2half_rn(b);
-    row_dst[out_idx + 3] = __float2half_rn(a);
+    row_dst[out_idx + 3] = __float2half_rn(1.0f);
 }
 
 void launch_unpack_rgb10a2_to_rgba16f(
