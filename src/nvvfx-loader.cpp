@@ -175,13 +175,12 @@ bool load_sdk(const char *explicit_path) {
         candidates.push_back(env_path);
     }
 
-    // ComfyUI and common local python venv locations
-    // standard path
-
-    // Standard user home python locations
+    // Standard user home python / venv locations
     const char *home = std::getenv("HOME");
     if (home) {
         fs::path p_home(home);
+        candidates.push_back(p_home / "ComfyUI/.venv/lib/python3.12/site-packages/nvvfx/libs");
+        candidates.push_back(p_home / "ComfyUI/.venv/lib/python3.11/site-packages/nvvfx/libs");
         candidates.push_back(p_home / ".local/lib/python3.12/site-packages/nvvfx/libs");
         candidates.push_back(p_home / ".local/lib/python3.11/site-packages/nvvfx/libs");
     }

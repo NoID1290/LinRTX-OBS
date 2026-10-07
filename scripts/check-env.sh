@@ -70,7 +70,8 @@ fi
 echo "[6/7] NVIDIA Video Effects SDK (Maxine / RTX Video):"
 SDK_PATHS=(
     "${LINRTX_SDK_PATH:-}"
-    "$HOME/ComfyUI/.venv/lib/python3.12/site-packages/nvvfx/libs"
+    "${HOME:-}/ComfyUI/.venv/lib/python3.12/site-packages/nvvfx/libs"
+    "${HOME:-}/.local/lib/python3.12/site-packages/nvvfx/libs"
     "/usr/local/VideoFX/lib"
     "/opt/nvidia/libnvvfx"
 )

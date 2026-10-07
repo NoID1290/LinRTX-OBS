@@ -13,6 +13,7 @@ tools/truehdr_test
 tools/output_*
 *.png
 *.exr
+*.hdr
 *.mp4
 *.mkv
 
@@ -26,10 +27,21 @@ libs/
 models/
 nvvfx_libs/
 
-# IDE / Editor
+# IDE / Editor / Toolchain
 .vscode/
 .idea/
 *.swp
 *~
 compile_commands.json
 .cache/
+.clangd/
+
+# Environment, secrets, and local overrides
+.env
+*.env
+.env.*
+*.local
+config.local.*
+
+# Agent prompts and private instructions
+PROMPT.md
