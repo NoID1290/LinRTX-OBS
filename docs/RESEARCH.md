@@ -172,6 +172,23 @@ typedef struct CUstream_st *CUstream;
      - `Luminance`: Target HDR display peak in nits, `400..2000`, default `650`
      - `DebandingOff`: `0` (deband on) or `1` (deband off), default `0`
 
+3. **Video Frame Generation (`NVVFX_FX_VIDEO_FRAME_GENERATION = "VideoFrameGeneration"`)**:
+   - `InputWidth`, `InputHeight`: Input frame dimensions in pixels.
+   - `SrcImage0`: Previous frame: `(RGBA | BGRA) + U8` or `RGB10A2 + P32` chunky, in `NVCV_CUDA` memory.
+   - `SrcImage1`: Current frame: Same encoding and dimensions as `SrcImage0`, in `NVCV_CUDA` memory.
+   - `DstImage0`: Interpolated output frame: Same encoding and dimensions as inputs, in `NVCV_CUDA` memory.
+   - `Mode`:
+     - `0` = Low (Speed optimized, ~4.6 ms on RTX 4070 Ti)
+     - `1` = Medium (Balanced, ~1.9 ms / 520 FPS on RTX 4070 Ti)
+     - `2` = High (Maximum quality, ~18.9 ms on RTX 4070 Ti)
+   - `FrameMultiplier`: Integer multiplier in `[2, 8]`. Set to `0` when using explicit `Timestep`.
+   - `FrameIndex`: Sub-frame index in `[1, FrameMultiplier - 1]` when `FrameMultiplier != 0`.
+   - `Timestep`: Continuous temporal position in `(0.0, 1.0)` when `FrameMultiplier == 0`.
+   - `AutomaticShotChangeDetectionEnabled`: `1` (enabled by default) or `0`.
+   - `ShotChange`: Manual shot change flag (`1` or `0`).
+   - `ImageEncodingMode`: `0` for 8-bit RGBA, `1` for 10-bit RGB10A2.
+   - `CudaStream`: CUDA stream handle.
+
 ---
 
 ## 4. CUDA–OpenGL Interop on Linux (Wayland / EGL)

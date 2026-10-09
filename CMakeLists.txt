@@ -3,6 +3,7 @@ project(linrtx-obs VERSION 1.0.0 LANGUAGES C CXX CUDA)
 
 option(ENABLE_VSR "Enable RTX Video Super Resolution filter" ON)
 option(ENABLE_TRUEHDR "Enable RTX TrueHDR filter" ON)
+option(ENABLE_FRAMEGEN "Enable RTX Video Frame Generation filter" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,12 +40,14 @@ set(SOURCES
     src/plugin-main.cpp
     src/nvvfx-loader.cpp
     src/cuda-gl-interop.cpp
+    src/kernels/format_convert.cu
 )
 
 set(HEADERS
     src/nvvfx-interface.h
     src/nvvfx-loader.h
     src/cuda-gl-interop.h
+    src/kernels/format_convert.h
 )
 
 if(ENABLE_VSR)
@@ -53,9 +56,13 @@ if(ENABLE_VSR)
 endif()
 
 if(ENABLE_TRUEHDR)
-    list(APPEND SOURCES src/filter-truehdr.cpp src/kernels/format_convert.cu)
-    list(APPEND HEADERS src/kernels/format_convert.h)
+    list(APPEND SOURCES src/filter-truehdr.cpp)
     add_compile_definitions(ENABLE_TRUEHDR=1)
+endif()
+
+if(ENABLE_FRAMEGEN)
+    list(APPEND SOURCES src/filter-framegen.cpp)
+    add_compile_definitions(ENABLE_FRAMEGEN=1)
 endif()
 
 add_library(linrtx-obs MODULE ${SOURCES} ${HEADERS})

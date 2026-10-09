@@ -5,6 +5,7 @@ bin/
 out/
 tools/vsr_test
 tools/truehdr_test
+tools/fg_test
 *.o
 *.so
 *.a

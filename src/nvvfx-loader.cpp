@@ -83,7 +83,8 @@ static bool try_load_from_directory(const fs::path &dir) {
         "libnvVFXVideoSuperRes.so",
         "libnvidia-ngx-vsr.so.1.8.3",
         "libnvVFXTrueHDR.so",
-        "libnvidia-ngx-truehdr.so.1.2.3"
+        "libnvidia-ngx-truehdr.so.1.2.3",
+        "libnvVFXVideoFrameGeneration.so"
     };
 
     std::vector<void*> handles;

@@ -17,6 +17,7 @@ OBJS := \
     src/cuda-gl-interop.o \
     src/filter-vsr.o \
     src/filter-truehdr.o \
+    src/filter-framegen.o \
     src/kernels/format_convert.o
 
 USER_PLUGIN_DIR := $(HOME)/.config/obs-studio/plugins/linrtx-obs

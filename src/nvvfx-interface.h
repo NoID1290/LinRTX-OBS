@@ -78,17 +78,29 @@ typedef enum NvCVImage_ComponentType {
 #define NVCV_CUDA_ARRAY  3
 
 /* Effect Selector Strings */
-#define NVVFX_FX_VIDEO_SUPER_RES "VideoSuperRes"
-#define NVVFX_FX_TRUE_HDR        "TrueHDR"
+#define NVVFX_FX_VIDEO_SUPER_RES        "VideoSuperRes"
+#define NVVFX_FX_TRUE_HDR               "TrueHDR"
+#define NVVFX_FX_VIDEO_FRAME_GENERATION "VideoFrameGeneration"
 
 /* Parameter Selector Strings */
 #define NVVFX_PARAM_SRC_IMAGE_0        "SrcImage0"
+#define NVVFX_PARAM_SRC_IMAGE_1        "SrcImage1"
 #define NVVFX_PARAM_DST_IMAGE_0        "DstImage0"
 #define NVVFX_PARAM_MODEL_DIR          "ModelDir"
 #define NVVFX_PARAM_CUDA_STREAM        "CudaStream"
 #define NVVFX_PARAM_STRENGTH           "Strength"
 #define NVVFX_PARAM_QUALITY_LEVEL      "QualityLevel"
 #define NVVFX_PARAM_IMAGE_ENCODING     "ImageEncodingMode"
+
+/* VideoFrameGeneration specific parameters */
+#define NVVFX_PARAM_INPUT_WIDTH        "InputWidth"
+#define NVVFX_PARAM_INPUT_HEIGHT       "InputHeight"
+#define NVVFX_PARAM_MODE               "Mode"
+#define NVVFX_PARAM_FRAME_MULTIPLIER   "FrameMultiplier"
+#define NVVFX_PARAM_FRAME_INDEX        "FrameIndex"
+#define NVVFX_PARAM_TIMESTEP           "Timestep"
+#define NVVFX_PARAM_SHOT_CHANGE        "ShotChange"
+#define NVVFX_PARAM_AUTO_SHOT_CHANGE   "AutomaticShotChangeDetectionEnabled"
 
 /* TrueHDR specific parameters */
 #define NVVFX_PARAM_CONTRAST           "Contrast"

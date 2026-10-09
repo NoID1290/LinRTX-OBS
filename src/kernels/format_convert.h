@@ -21,4 +21,13 @@ void launch_invert_rgba8(
     cudaStream_t stream
 );
 
+// Fast strided difference computation between two frames on GPU
+void launch_compute_frame_diff(
+    const void *frameA, size_t pitchA,
+    const void *frameB, size_t pitchB,
+    uint32_t width, uint32_t height,
+    unsigned long long *d_diff,
+    cudaStream_t stream
+);
+
 } // namespace linrtx

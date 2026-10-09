@@ -73,4 +73,48 @@ void launch_invert_rgba8(
     );
 }
 
+__global__ void k_compute_frame_diff_rgba8(
+    const uint8_t *__restrict__ frameA, size_t pitchA,
+    const uint8_t *__restrict__ frameB, size_t pitchB,
+    uint32_t width, uint32_t height,
+    unsigned long long *__restrict__ diff_accum
+) {
+    uint32_t x = (blockIdx.x * blockDim.x + threadIdx.x) * 8;
+    uint32_t y = (blockIdx.y * blockDim.y + threadIdx.y) * 8;
+    if (x >= width || y >= height) return;
+
+    const uchar4 *rowA = reinterpret_cast<const uchar4 *>(frameA + y * pitchA);
+    const uchar4 *rowB = reinterpret_cast<const uchar4 *>(frameB + y * pitchB);
+
+    uchar4 pA = rowA[x];
+    uchar4 pB = rowB[x];
+
+    int d = abs((int)pA.x - (int)pB.x) +
+            abs((int)pA.y - (int)pB.y) +
+            abs((int)pA.z - (int)pB.z);
+
+    if (d > 0) {
+        atomicAdd(diff_accum, (unsigned long long)d);
+    }
+}
+
+void launch_compute_frame_diff(
+    const void *frameA, size_t pitchA,
+    const void *frameB, size_t pitchB,
+    uint32_t width, uint32_t height,
+    unsigned long long *d_diff,
+    cudaStream_t stream
+) {
+    uint32_t sample_w = (width + 7) / 8;
+    uint32_t sample_h = (height + 7) / 8;
+    dim3 block(16, 16);
+    dim3 grid((sample_w + block.x - 1) / block.x, (sample_h + block.y - 1) / block.y);
+
+    k_compute_frame_diff_rgba8<<<grid, block, 0, stream>>>(
+        reinterpret_cast<const uint8_t *>(frameA), pitchA,
+        reinterpret_cast<const uint8_t *>(frameB), pitchB,
+        width, height, d_diff
+    );
+}
+
 } // namespace linrtx
